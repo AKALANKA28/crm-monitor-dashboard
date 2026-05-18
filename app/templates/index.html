@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ app_title }}</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div class="app-layout">
+      <header class="top-header">
+        <div class="brand-block">
+          <div class="logo-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+            </svg>
+          </div>
+          <span class="font-bold text-xl">CRM Monitor</span>
+          <div class="divider desktop-only"></div>
+          <div class="breadcrumbs desktop-only">
+            <span class="text-muted font-medium">CRM Org</span> / 
+            <span class="font-medium">MONITOR-APP</span>
+          </div>
+        </div>
+        <div class="header-actions">
+           <span class="badge badge-brand desktop-only">main PRODUCTION</span>
+           <span class="source-pill"><span class="status-dot"></span>{{ data_source }}</span>
+        </div>
+      </header>
+
+      <div class="filter-overlay desktop-hidden" id="filterOverlay"></div>
+
+      <main class="main-content">
+        <div class="page-container">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Dashboard</h1>
+              <p class="text-muted mt-1">Keep a watchful eye on your CRM requests.</p>
+            </div>
+            <button id="exportBtn" class="btn btn-primary btn-pill" type="button" title="Download Excel">
+              <span class="desktop-text">Download Excel</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+            </button>
+          </div>
+
+          <section class="stats-row" aria-label="Request status summary">
+            <div class="stat-card">
+              <div class="stat-header">
+                <div class="stat-indicator bg-default"></div>
+                <span class="stat-label">Total Requests</span>
+              </div>
+              <strong id="totalCount">0</strong>
+            </div>
+            
+            <div class="stat-card">
+              <div class="stat-header">
+                <div class="stat-indicator bg-success"></div>
+                <span class="stat-label">Success</span>
+              </div>
+              <strong id="successCount" class="text-success">0</strong>
+            </div>
+            
+            <div class="stat-card">
+              <div class="stat-header">
+                <div class="stat-indicator bg-failed"></div>
+                <span class="stat-label">Failed</span>
+              </div>
+              <strong id="failedCount" class="text-failed">0</strong>
+            </div>
+            
+            <div class="stat-card">
+              <div class="stat-header">
+                <div class="stat-indicator bg-pending"></div>
+                <span class="stat-label">Pending</span>
+              </div>
+              <strong id="pendingCount" class="text-pending">0</strong>
+            </div>
+            
+            <div class="stat-card">
+              <div class="stat-header">
+                <div class="stat-indicator bg-progress"></div>
+                <span class="stat-label">In Progress</span>
+              </div>
+              <strong id="inProgressCount" class="text-progress">0</strong>
+            </div>
+          </section>
+
+          <div class="content-panel">
+            <section class="toolbar" aria-label="Filters">
+              <form id="filterForm" class="filters-form">
+                
+                <div class="search-row">
+                  <div class="search-box">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <input id="searchText" name="q" type="search" placeholder="Search customer, phone, Request ID..." autocomplete="off" />
+                  </div>
+                  <button type="button" class="btn btn-outline btn-icon desktop-hidden" id="mobileFilterBtn" title="Open Filters">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                    </svg>
+                  </button>
+                </div>
+
+                <div class="advanced-filters" id="advancedFilters">
+                  
+                  <div class="drawer-header desktop-hidden">
+                    <h2 class="font-bold text-xl">Filters</h2>
+                    <button type="button" class="btn-icon-small" id="closeFilterBtn" title="Close Filters">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>
+                      </svg>
+                    </button>
+                  </div>
+
+                  <div class="date-group">
+                    <input id="dateFrom" name="date_from" type="date" class="input-rounded" />
+                    <input id="dateTo" name="date_to" type="date" class="input-rounded" />
+                  </div>
+                  
+                  <select id="status" name="status" class="input-rounded">
+                    <option value="">All statuses</option>
+                    <option value="Success">Success</option>
+                    <option value="Failed">Failed</option>
+                    <option value="Pending">Pending</option>
+                    <option value="In Progress">In Progress</option>
+                  </select>
+
+                  <div class="action-group">
+                    <button class="btn btn-icon btn-outline" type="button" id="resetBtn" title="Reset Filters">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
+                      </svg>
+                    </button>
+                    <button class="btn btn-primary flex-grow" type="submit">Apply</button>
+                  </div>
+                </div>
+
+              </form>
+            </section>
+
+            <div id="message" class="message hidden"></div>
+            
+            <div class="table-scroll" role="region" tabindex="0">
+              <table id="requestsTable">
+                <thead></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+
+            <div class="table-footer">
+              <div class="rows-info">
+                <select id="pageSize" name="page_size" class="input-minimal">
+                  <option value="10">10 rows</option>
+                  <option value="25" selected>25 rows</option>
+                  <option value="50">50 rows</option>
+                </select>
+                <span id="tableMeta" class="text-muted">0 records</span>
+              </div>
+
+              <div class="pagination">
+                <button id="prevBtn" class="btn-icon-small" type="button">‹</button>
+                <span class="page-info">Page <span id="pageIndicatorNum">1</span></span>
+                <button id="nextBtn" class="btn-icon-small" type="button">›</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

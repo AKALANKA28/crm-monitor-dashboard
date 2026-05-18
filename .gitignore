@@ -1,0 +1,6 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+app/data/crm_requests.json
+*.xlsx
