@@ -2,19 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, date, timedelta
-from pathlib import Path
 from typing import Any
 import copy
-import json
 import re
 import threading
 import time
 
-from app.config import Settings, DUMMY_DATA_FILE
-from app.dummy_data import ensure_dummy_data
+# Removed the dummy data imports
+from app.config import Settings
 
 STATUS_ORDER = ["Success", "Failed", "Pending", "In Progress"]
-
 
 def _canonical_status(value: Any) -> str:
     text = str(value or "Unknown").strip()
@@ -32,13 +29,13 @@ def _canonical_status(value: Any) -> str:
     }
     return mapping.get(normalized, text)
 
-
 @dataclass
 class RequestFilters:
     request_id: str | None = None
     date_from: date | None = None
     date_to: date | None = None
     status: str | None = None
+    status_list: list[str] | None = None
     q: str | None = None
     page: int = 1
     page_size: int = 25
@@ -50,7 +47,6 @@ class RequestFilters:
     @property
     def safe_page_size(self) -> int:
         return min(max(1, self.page_size), 200)
-
 
 def _parse_datetime(value: Any) -> datetime | None:
     if value is None:
@@ -70,7 +66,6 @@ def _parse_datetime(value: Any) -> datetime | None:
                 continue
     return None
 
-
 def _normalize_status_counts(counts: dict[str, int]) -> dict[str, int]:
     rolled_up: dict[str, int] = {}
     for status, count in counts.items():
@@ -82,93 +77,6 @@ def _normalize_status_counts(counts: dict[str, int]) -> dict[str, int]:
         if status not in normalized:
             normalized[status] = int(count)
     return normalized
-
-
-class DummyRepository:
-    def __init__(self, path: Path = DUMMY_DATA_FILE):
-        self.path = path
-        ensure_dummy_data(path)
-
-    def _load_rows(self) -> list[dict[str, Any]]:
-        return json.loads(self.path.read_text(encoding="utf-8"))
-
-    def _save_rows(self, rows: list[dict[str, Any]]) -> None:
-        self.path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
-
-    def _apply_filters(self, rows: list[dict[str, Any]], filters: RequestFilters) -> list[dict[str, Any]]:
-        filtered: list[dict[str, Any]] = []
-        request_text = (filters.request_id or "").strip().lower()
-        status_text = (filters.status or "").strip().lower()
-        q_text = (filters.q or "").strip().lower()
-
-        for row in rows:
-            created = _parse_datetime(row.get("CreatedAt"))
-            created_date = created.date() if created else None
-
-            if request_text and request_text not in str(row.get("RequestId", "")).lower():
-                continue
-            if status_text and status_text != str(row.get("CRMStatus", "")).lower():
-                continue
-            if filters.date_from and (created_date is None or created_date < filters.date_from):
-                continue
-            if filters.date_to and (created_date is None or created_date > filters.date_to):
-                continue
-            if q_text:
-                haystack = " ".join(str(value) for value in row.values()).lower()
-                if q_text not in haystack:
-                    continue
-            filtered.append(row)
-
-        return filtered
-
-    def list_requests(self, filters: RequestFilters) -> dict[str, Any]:
-        rows = self._apply_filters(self._load_rows(), filters)
-        rows.sort(key=lambda row: str(row.get("CreatedAt", "")), reverse=True)
-        total = len(rows)
-        start = (filters.safe_page - 1) * filters.safe_page_size
-        end = start + filters.safe_page_size
-        page_rows = rows[start:end]
-        columns = list(page_rows[0].keys()) if page_rows else self.get_columns()
-        counts = self.get_status_counts_from_rows(rows)
-        return {
-            "rows": page_rows,
-            "columns": columns,
-            "total": total,
-            "page": filters.safe_page,
-            "page_size": filters.safe_page_size,
-            "status_counts": counts,
-        }
-
-    def export_rows(self, filters: RequestFilters) -> list[dict[str, Any]]:
-        rows = self._apply_filters(self._load_rows(), filters)
-        rows.sort(key=lambda row: str(row.get("CreatedAt", "")), reverse=True)
-        return rows
-
-    def get_status_counts_from_rows(self, rows: list[dict[str, Any]]) -> dict[str, int]:
-        counts: dict[str, int] = {}
-        for row in rows:
-            status = _canonical_status(row.get("CRMStatus"))
-            counts[status] = counts.get(status, 0) + 1
-        return _normalize_status_counts(counts)
-
-    def get_columns(self) -> list[str]:
-        rows = self._load_rows()
-        if rows:
-            return list(rows[0].keys())
-        return []
-
-    def retry_request(self, request_id: str) -> dict[str, Any] | None:
-        rows = self._load_rows()
-        for row in rows:
-            if str(row.get("RequestId")) == request_id:
-                row["CRMStatus"] = "Pending"
-                row["UpdatedAt"] = datetime.now().replace(microsecond=0).isoformat(sep=" ")
-                row["Attempts"] = int(row.get("Attempts") or 0) + 1
-                row["LastError"] = "Moved back to Pending for retry."
-                self._save_rows(rows)
-                return row
-        return None
-
 
 class SqlServerRepository:
     def __init__(self, settings: Settings):
@@ -213,7 +121,13 @@ class SqlServerRepository:
         if filters.request_id:
             clauses.append(f"CAST({request_col} AS NVARCHAR(255)) LIKE ?")
             params.append(f"%{filters.request_id.strip()}%")
-        if filters.status:
+        if filters.status_list:
+            statuses = [value.strip() for value in filters.status_list if value and value.strip()]
+            if statuses:
+                placeholders = ", ".join(["?"] * len(statuses))
+                clauses.append(f"{status_col} IN ({placeholders})")
+                params.extend(statuses)
+        elif filters.status:
             clauses.append(f"{status_col} = ?")
             params.append(filters.status.strip())
         if filters.q:
@@ -356,12 +270,9 @@ class CachedRepository:
             self.clear_cache()
         return row
 
-
+# Updated to directly return the SqlServerRepository wrapped in cache
 def get_repository(settings: Settings):
-    if settings.data_source in {"mssql", "sqlserver", "azure", "azuresql"}:
-        repository = SqlServerRepository(settings)
-    else:
-        repository = DummyRepository()
+    repository = SqlServerRepository(settings)
     return CachedRepository(
         repository,
         ttl_seconds=settings.api_cache_ttl_seconds,
