@@ -13,6 +13,23 @@ from app.dummy_data import ensure_dummy_data
 STATUS_ORDER = ["Success", "Failed", "Pending", "In Progress"]
 
 
+def _canonical_status(value: Any) -> str:
+    text = str(value or "Unknown").strip()
+    if not text:
+        return "Unknown"
+    normalized = text.casefold()
+    mapping = {
+        "success": "Success",
+        "failed": "Failed",
+        "pending": "Pending",
+        "in progress": "In Progress",
+        "inprogress": "In Progress",
+        "in_progress": "In Progress",
+        "in-progress": "In Progress",
+    }
+    return mapping.get(normalized, text)
+
+
 @dataclass
 class RequestFilters:
     request_id: str | None = None
@@ -52,8 +69,13 @@ def _parse_datetime(value: Any) -> datetime | None:
 
 
 def _normalize_status_counts(counts: dict[str, int]) -> dict[str, int]:
-    normalized = {status: int(counts.get(status, 0)) for status in STATUS_ORDER}
+    rolled_up: dict[str, int] = {}
     for status, count in counts.items():
+        canonical = _canonical_status(status)
+        rolled_up[canonical] = rolled_up.get(canonical, 0) + int(count)
+
+    normalized = {status: int(rolled_up.get(status, 0)) for status in STATUS_ORDER}
+    for status, count in rolled_up.items():
         if status not in normalized:
             normalized[status] = int(count)
     return normalized
@@ -122,7 +144,7 @@ class DummyRepository:
     def get_status_counts_from_rows(self, rows: list[dict[str, Any]]) -> dict[str, int]:
         counts: dict[str, int] = {}
         for row in rows:
-            status = str(row.get("CRMStatus") or "Unknown")
+            status = _canonical_status(row.get("CRMStatus"))
             counts[status] = counts.get(status, 0) + 1
         return _normalize_status_counts(counts)
 
@@ -151,7 +173,9 @@ class SqlServerRepository:
         try:
             import pyodbc  # type: ignore
         except ImportError as exc:
-            raise RuntimeError("pyodbc is required for SQL Server mode. Install requirements.txt first.") from exc
+            raise RuntimeError(
+                "pyodbc is required for Azure SQL/SQL Server mode. Install requirements.txt first."
+            ) from exc
         self.pyodbc = pyodbc
 
     def _connect(self):
@@ -273,6 +297,6 @@ class SqlServerRepository:
 
 
 def get_repository(settings: Settings):
-    if settings.data_source == "mssql":
+    if settings.data_source in {"mssql", "sqlserver", "azure", "azuresql"}:
         return SqlServerRepository(settings)
     return DummyRepository()

@@ -1,6 +1,6 @@
 # CRM Request Monitor Dashboard
 
-A simple, professional monitoring web dashboard for CRM request statuses. It starts with dummy JSON data, then can be switched to SQL Server once database credentials are ready.
+A simple, professional monitoring web dashboard for CRM request statuses. It starts with dummy JSON data, then can be switched to Azure SQL once database credentials are ready.
 
 ## Features
 
@@ -11,7 +11,7 @@ A simple, professional monitoring web dashboard for CRM request statuses. It sta
 - Retry action for Failed and In Progress rows, which sets `CRMStatus` back to `Pending`
 - Excel export based on the active filters
 - Dummy data included/generated for local testing
-- SQL Server-ready repository layer
+- Azure SQL-ready repository layer
 
 ## Project structure
 
@@ -54,9 +54,9 @@ http://127.0.0.1:8000
 
 The app generates dummy rows in `app/data/crm_requests.json` on first run.
 
-## Switch to SQL Server later
+## Switch to Azure SQL later
 
-Install the SQL Server extras:
+Install the Azure SQL extras:
 
 ```bash
 pip install -r requirements-mssql.txt
@@ -65,15 +65,15 @@ pip install -r requirements-mssql.txt
 Then update `.env`:
 
 ```env
-APP_DATA_SOURCE=mssql
-SQLSERVER_CONNECTION_STRING=DRIVER={ODBC Driver 18 for SQL Server};SERVER=your-server;DATABASE=your-db;UID=your-user;PWD=your-password;TrustServerCertificate=yes;
+APP_DATA_SOURCE=azure
+DB_CONNECTION_STRING=DRIVER={ODBC Driver 18 for SQL Server};SERVER=your-server.database.windows.net;DATABASE=your-db;UID=your-user;PWD=your-password;Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;
 DB_TABLE=dbo.Customers
 DB_CREATED_AT_COLUMN=CreatedAt
 DB_STATUS_COLUMN=CRMStatus
 DB_REQUEST_ID_COLUMN=RequestId
 ```
 
-You can also use the individual SQL Server values in `.env.example` instead of `SQLSERVER_CONNECTION_STRING`.
+You can also use the individual `DB_*` values in `.env.example` instead of `DB_CONNECTION_STRING`.
 
 ## SQL note for daily counts
 
@@ -95,7 +95,7 @@ WHERE CreatedAt >= '2026-05-18'
 GROUP BY CRMStatus;
 ```
 
-The dashboard repository uses this range-based approach for SQL Server mode.
+The dashboard repository uses this range-based approach for Azure SQL mode.
 
 ## Retry action
 
@@ -108,7 +108,7 @@ Attempts = Attempts + 1
 LastError = Moved back to Pending for retry.
 ```
 
-In SQL Server mode, the app runs an update similar to:
+In Azure SQL mode, the app runs an update similar to:
 
 ```sql
 UPDATE dbo.Customers

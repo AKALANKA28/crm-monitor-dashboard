@@ -8,7 +8,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT_DIR / "app" / "data"
 DUMMY_DATA_FILE = DATA_DIR / "crm_requests.json"
 
-load_dotenv(ROOT_DIR / ".env")
+load_dotenv(ROOT_DIR / ".env", interpolate=False)
 
 
 class Settings(BaseModel):
@@ -20,25 +20,33 @@ class Settings(BaseModel):
     status_column: str = os.getenv("DB_STATUS_COLUMN", "CRMStatus")
     request_id_column: str = os.getenv("DB_REQUEST_ID_COLUMN", "RequestId")
 
-    sqlserver_connection_string: str | None = os.getenv("SQLSERVER_CONNECTION_STRING")
-    sqlserver_driver: str = os.getenv("SQLSERVER_DRIVER", "ODBC Driver 18 for SQL Server")
-    sqlserver_server: str = os.getenv("SQLSERVER_SERVER", "localhost")
-    sqlserver_database: str = os.getenv("SQLSERVER_DATABASE", "YourDatabase")
-    sqlserver_username: str = os.getenv("SQLSERVER_USERNAME", "")
-    sqlserver_password: str = os.getenv("SQLSERVER_PASSWORD", "")
-    sqlserver_trust_certificate: str = os.getenv("SQLSERVER_TRUST_CERTIFICATE", "yes")
+    db_connection_string: str | None = os.getenv("DB_CONNECTION_STRING") or os.getenv("SQLSERVER_CONNECTION_STRING")
+    db_driver: str = (
+        os.getenv("DB_DRIVER")
+        or os.getenv("SQLSERVER_DRIVER")
+        or "ODBC Driver 18 for SQL Server"
+    )
+    db_server: str = os.getenv("DB_SERVER") or os.getenv("SQLSERVER_SERVER") or "localhost"
+    db_database: str = os.getenv("DB_DATABASE") or os.getenv("SQLSERVER_DATABASE") or "YourDatabase"
+    db_username: str = os.getenv("DB_USERNAME") or os.getenv("SQLSERVER_USERNAME") or ""
+    db_password: str = os.getenv("DB_PASSWORD") or os.getenv("SQLSERVER_PASSWORD") or ""
+    db_encrypt: str = os.getenv("DB_ENCRYPT", "yes")
+    db_trust_certificate: str = os.getenv("DB_TRUST_CERTIFICATE", "no")
+    db_connection_timeout: str = os.getenv("DB_CONNECTION_TIMEOUT", "30")
 
     @property
     def sql_connection_string(self) -> str:
-        if self.sqlserver_connection_string:
-            return self.sqlserver_connection_string
+        if self.db_connection_string:
+            return self.db_connection_string
         return (
-            f"DRIVER={{{self.sqlserver_driver}}};"
-            f"SERVER={self.sqlserver_server};"
-            f"DATABASE={self.sqlserver_database};"
-            f"UID={self.sqlserver_username};"
-            f"PWD={self.sqlserver_password};"
-            f"TrustServerCertificate={self.sqlserver_trust_certificate};"
+            f"DRIVER={{{self.db_driver}}};"
+            f"SERVER={self.db_server};"
+            f"DATABASE={self.db_database};"
+            f"UID={self.db_username};"
+            f"PWD={self.db_password};"
+            f"Encrypt={self.db_encrypt};"
+            f"TrustServerCertificate={self.db_trust_certificate};"
+            f"Connection Timeout={self.db_connection_timeout};"
         )
 
 

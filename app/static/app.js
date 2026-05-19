@@ -3,7 +3,10 @@ const state = {
   pageSize: 25,
   total: 0,
   columns: [],
+  isLoading: false,
 };
+
+const AUTO_REFRESH_MS = 10000;
 
 const statusConfig = {
   Success: { countId: "successCount", className: "success" },
@@ -192,6 +195,8 @@ function bindRetryButtons() {
 }
 
 async function loadDashboard(page = 1) {
+  if (state.isLoading) return;
+  state.isLoading = true;
   state.page = page;
   state.pageSize = Number(document.getElementById("pageSize").value || 25);
 
@@ -207,6 +212,8 @@ async function loadDashboard(page = 1) {
   } catch (error) {
     setMessage(error.message, "error");
     document.getElementById("tableMeta").textContent = "Error loading";
+  } finally {
+    state.isLoading = false;
   }
 }
 
@@ -272,6 +279,12 @@ function setupEvents() {
     .addEventListener("click", () => loadDashboard(state.page + 1));
 }
 
+function startAutoRefresh() {
+  if (!AUTO_REFRESH_MS) return;
+  window.setInterval(() => loadDashboard(state.page), AUTO_REFRESH_MS);
+}
+
 setDefaultDates();
 setupEvents();
 loadDashboard(1);
+startAutoRefresh();
