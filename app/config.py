@@ -11,6 +11,13 @@ DUMMY_DATA_FILE = DATA_DIR / "crm_requests.json"
 load_dotenv(ROOT_DIR / ".env", interpolate=False)
 
 
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    return int(value)
+
+
 class Settings(BaseModel):
     app_title: str = os.getenv("APP_TITLE", "CRM Request Monitor")
     data_source: str = os.getenv("APP_DATA_SOURCE", "dummy").lower()
@@ -19,6 +26,7 @@ class Settings(BaseModel):
     created_at_column: str = os.getenv("DB_CREATED_AT_COLUMN", "CreatedAt")
     status_column: str = os.getenv("DB_STATUS_COLUMN", "CRMStatus")
     request_id_column: str = os.getenv("DB_REQUEST_ID_COLUMN", "RequestId")
+    excel_logo_path: str = os.getenv("EXCEL_LOGO_PATH", "app/static/earnest-logo.png")
 
     db_connection_string: str | None = os.getenv("DB_CONNECTION_STRING") or os.getenv("SQLSERVER_CONNECTION_STRING")
     db_driver: str = (
@@ -33,6 +41,8 @@ class Settings(BaseModel):
     db_encrypt: str = os.getenv("DB_ENCRYPT", "yes")
     db_trust_certificate: str = os.getenv("DB_TRUST_CERTIFICATE", "no")
     db_connection_timeout: str = os.getenv("DB_CONNECTION_TIMEOUT", "30")
+    api_cache_ttl_seconds: int = _env_int("API_CACHE_TTL_SECONDS", 20)
+    api_cache_max_entries: int = _env_int("API_CACHE_MAX_ENTRIES", 256)
 
     @property
     def sql_connection_string(self) -> str:

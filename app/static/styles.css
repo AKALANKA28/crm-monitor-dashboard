@@ -195,14 +195,17 @@ button:disabled {
   overflow-x: auto;
   padding-bottom: 8px;
   scrollbar-width: none;
+  flex: 0 0 auto;
+  align-items: stretch;
 }
 .stats-row::-webkit-scrollbar {
   display: none;
 }
 
 .stat-card {
-  flex: 1;
+  flex: 1 0 160px;
   min-width: 160px;
+  min-height: 112px;
   background: var(--surface);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-soft);
@@ -273,6 +276,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* Toolbar / Filters */
@@ -424,6 +429,8 @@ button:disabled {
 .table-scroll {
   overflow-x: auto;
   width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .table-scroll::-webkit-scrollbar {
   width: 8px;

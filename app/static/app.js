@@ -23,8 +23,70 @@ function normalizeColumnKey(value) {
 }
 
 function findRequestIdColumn(columns) {
-  const target = "requestid";
-  return columns.find((column) => normalizeColumnKey(column) === target);
+  const normalizedColumns = columns.map((column) => ({
+    name: column,
+    key: normalizeColumnKey(column),
+  }));
+  const exact = normalizedColumns.find((column) => column.key === "requestid");
+  if (exact) return exact.name;
+
+  const requestId = normalizedColumns.find(
+    (column) => column.key.includes("request") && column.key.endsWith("id"),
+  );
+  if (requestId) return requestId.name;
+
+  const id = normalizedColumns.find((column) => column.key === "id");
+  return id ? id.name : null;
+}
+
+function findStatusColumn(columns, rows = []) {
+  const normalizedColumns = columns.map((column) => ({
+    name: column,
+    key: normalizeColumnKey(column),
+  }));
+  const exactTargets = ["crmstatus", "status"];
+  const exact = normalizedColumns.find((column) =>
+    exactTargets.includes(column.key),
+  );
+  if (exact) return exact.name;
+
+  const crmStatus = normalizedColumns.find(
+    (column) => column.key.includes("crm") && column.key.includes("status"),
+  );
+  if (crmStatus) return crmStatus.name;
+
+  const retryableStatusValues = new Set(["Failed", "In Progress"]);
+  const statusLikeColumns = normalizedColumns.filter((column) =>
+    column.key.includes("status"),
+  );
+  const byStatusValues = statusLikeColumns.find(({ name }) =>
+    rows.some((row) => retryableStatusValues.has(canonicalStatus(row[name]))),
+  );
+  if (byStatusValues) return byStatusValues.name;
+
+  const statusSuffix = statusLikeColumns.find(
+    (column) => column.key.endsWith("status") && column.key !== "kycstatus",
+  );
+  if (statusSuffix) return statusSuffix.name;
+
+  const byRetryableValues = normalizedColumns.find(({ name }) =>
+    rows.some((row) => retryableStatusValues.has(canonicalStatus(row[name]))),
+  );
+  return byRetryableValues ? byRetryableValues.name : null;
+}
+
+function getRowValue(row, column, fallbackKeys = []) {
+  if (column && hasOwn(row, column)) return row[column];
+
+  for (const key of fallbackKeys) {
+    if (hasOwn(row, key)) return row[key];
+  }
+
+  return "";
+}
+
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object, key);
 }
 
 function findColumnMatch(query, columns) {
@@ -135,7 +197,7 @@ function escapeHtml(value) {
 }
 
 function badgeForStatus(status) {
-  const normalized = String(status || "Unknown");
+  const normalized = canonicalStatus(status);
   const css = statusConfig[normalized]?.className || "default";
   return `<span class="badge badge-${css}">${escapeHtml(normalized)}</span>`;
 }
@@ -163,6 +225,7 @@ function renderTable(data) {
   const columns = data.columns || [];
   state.columns = columns;
   const requestIdColumn = findRequestIdColumn(columns);
+  const statusColumn = findStatusColumn(columns, rows);
 
   const total = Number(data.total || 0);
   const page = Number(data.page || 1);
@@ -208,8 +271,20 @@ function renderTable(data) {
 
   tbody.innerHTML = rows
     .map((row) => {
-      const requestId = row.RequestId || row.requestId || row.request_id || "";
-      const status = row.CRMStatus || row.crmStatus || row.crm_status || "";
+      const requestId = getRowValue(row, requestIdColumn, [
+        "RequestId",
+        "requestId",
+        "request_id",
+        "Id",
+        "id",
+      ]);
+      const status = getRowValue(row, statusColumn, [
+        "CRMStatus",
+        "crmStatus",
+        "crm_status",
+        "Status",
+        "status",
+      ]);
 
       const retryButton = shouldAllowRetry(status)
         ? `<button class="btn btn-danger retry-btn" data-request-id="${escapeHtml(requestId)}">Retry</button>`
@@ -222,7 +297,7 @@ function renderTable(data) {
           const className =
             column === requestIdColumn ? "sticky-col sticky-request" : "";
           const classAttr = className ? ` class="${className}"` : "";
-          if (column === "CRMStatus") {
+          if (column === statusColumn) {
             return `<td${classAttr}>${badgeForStatus(value)}</td>`;
           }
           return `<td${classAttr} title="${escapeHtml(value)}">${escapeHtml(value)}</td>`;
@@ -237,7 +312,26 @@ function renderTable(data) {
 }
 
 function shouldAllowRetry(status) {
-  return ["Failed", "In Progress"].includes(String(status || ""));
+  return ["Failed", "In Progress"].includes(canonicalStatus(status));
+}
+
+function canonicalStatus(status) {
+  const text = String(status || "").trim();
+  if (!text) return "Unknown";
+
+  const normalized = text.toLowerCase().replace(/[\s_-]+/g, "");
+  const statusMap = {
+    success: "Success",
+    failed: "Failed",
+    fail: "Failed",
+    failure: "Failed",
+    error: "Failed",
+    pending: "Pending",
+    inprogress: "In Progress",
+    processing: "In Progress",
+  };
+
+  return statusMap[normalized] || text;
 }
 
 function bindRetryButtons() {

@@ -4,8 +4,11 @@ from dataclasses import dataclass
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Any
+import copy
 import json
 import re
+import threading
+import time
 
 from app.config import Settings, DUMMY_DATA_FILE
 from app.dummy_data import ensure_dummy_data
@@ -296,7 +299,71 @@ class SqlServerRepository:
             return rows[0] if rows else None
 
 
+class CachedRepository:
+    def __init__(self, repository, ttl_seconds: int, max_entries: int):
+        self.repository = repository
+        self.ttl_seconds = max(0, int(ttl_seconds))
+        self.max_entries = max(0, int(max_entries))
+        self._lock = threading.Lock()
+        self._cache: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
+
+    @staticmethod
+    def _filter_key(filters: RequestFilters) -> tuple[Any, ...]:
+        return (
+            filters.request_id or "",
+            filters.date_from.isoformat() if filters.date_from else "",
+            filters.date_to.isoformat() if filters.date_to else "",
+            filters.status or "",
+            filters.q or "",
+            filters.safe_page,
+            filters.safe_page_size,
+        )
+
+    def _enabled(self) -> bool:
+        return self.ttl_seconds > 0 and self.max_entries > 0
+
+    def clear_cache(self) -> None:
+        with self._lock:
+            self._cache.clear()
+
+    def list_requests(self, filters: RequestFilters) -> dict[str, Any]:
+        if not self._enabled():
+            return self.repository.list_requests(filters)
+
+        key = self._filter_key(filters)
+        now = time.monotonic()
+        with self._lock:
+            cached = self._cache.get(key)
+            if cached:
+                expires_at, value = cached
+                if expires_at > now:
+                    return copy.deepcopy(value)
+                self._cache.pop(key, None)
+
+        value = self.repository.list_requests(filters)
+        with self._lock:
+            self._cache[key] = (now + self.ttl_seconds, copy.deepcopy(value))
+            while len(self._cache) > self.max_entries:
+                self._cache.pop(next(iter(self._cache)))
+        return value
+
+    def export_rows(self, filters: RequestFilters) -> list[dict[str, Any]]:
+        return self.repository.export_rows(filters)
+
+    def retry_request(self, request_id: str) -> dict[str, Any] | None:
+        row = self.repository.retry_request(request_id)
+        if row:
+            self.clear_cache()
+        return row
+
+
 def get_repository(settings: Settings):
     if settings.data_source in {"mssql", "sqlserver", "azure", "azuresql"}:
-        return SqlServerRepository(settings)
-    return DummyRepository()
+        repository = SqlServerRepository(settings)
+    else:
+        repository = DummyRepository()
+    return CachedRepository(
+        repository,
+        ttl_seconds=settings.api_cache_ttl_seconds,
+        max_entries=settings.api_cache_max_entries,
+    )

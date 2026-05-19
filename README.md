@@ -75,6 +75,17 @@ DB_REQUEST_ID_COLUMN=RequestId
 
 You can also use the individual `DB_*` values in `.env.example` instead of `DB_CONNECTION_STRING`.
 
+## Dashboard read cache
+
+The `/api/requests` endpoint uses a small in-memory TTL cache so repeated auto-refreshes with the same filters do not hit the database every time. By default, identical dashboard reads are cached for 20 seconds and the cache is cleared after a retry action.
+
+```env
+API_CACHE_TTL_SECONDS=20
+API_CACHE_MAX_ENTRIES=256
+```
+
+Set `API_CACHE_TTL_SECONDS=0` to disable caching. Exports are not cached, so downloaded Excel files always query the current filtered data.
+
 ## SQL note for daily counts
 
 Your current query works:
@@ -117,6 +128,30 @@ WHERE RequestId = @requestId;
 ```
 
 If your actual table does not have `UpdatedAt`, either add it or adjust `SqlServerRepository.retry_request()` in `app/data_access.py`.
+
+## Customer-facing Excel branding
+
+The Excel export uses the Earnest Insurance color palette and can include the company logo in the Summary sheet header.
+
+Excel layout, color palette, logo placement, summary cards, charts, and request table styling are managed in:
+
+```text
+app/excel_export.py
+```
+
+Place the logo image here:
+
+```text
+app/static/earnest-logo.png
+```
+
+Or override the path in `.env`:
+
+```env
+EXCEL_LOGO_PATH=app/static/earnest-logo.png
+```
+
+Logo embedding requires Pillow, which is included in `requirements.txt`.
 
 ## API endpoints
 
