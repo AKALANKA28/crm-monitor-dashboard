@@ -462,7 +462,9 @@ def ws_coordinate(cell: str) -> dict[str, int]:
     return {"col": col_index - 1, "row": int(row_digits) - 1}
 
 def _resolve_logo_path(settings: Settings) -> Path:
-    path = Path(settings.excel_logo_path)
+    raw_path = (settings.excel_logo_path or "").strip()
+    normalized_path = raw_path.replace("\\", "/")
+    path = Path(normalized_path)
     if path.is_absolute():
         return path
     return Path(__file__).resolve().parent.parent / path
