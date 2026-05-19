@@ -23,6 +23,33 @@ app = FastAPI(title=settings.app_title)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
+RECIPIENT_KEY_MAP = {
+    "recipient_emails": "to",
+    "cc_emails": "cc",
+    "bcc_emails": "bcc",
+}
+
+def _split_emails(value: str) -> list[str]:
+    return [item.strip() for item in value.replace(";", ",").split(",") if item.strip()]
+
+def _load_email_recipients(path: Path) -> dict[str, list[str]]:
+    recipients = {"to": [], "cc": [], "bcc": []}
+    if not path.exists():
+        return recipients
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith(";"):
+            continue
+        if "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        normalized_key = key.strip().lower()
+        target = RECIPIENT_KEY_MAP.get(normalized_key)
+        if not target:
+            continue
+        recipients[target].extend(_split_emails(value))
+    return recipients
+
 def build_filters(
     request_id: Optional[str] = None,
     date_from: Optional[date] = None,
@@ -95,7 +122,7 @@ def export_excel(
 # --- NEW ENDPOINT: SEND EMAIL ---
 @app.post("/api/send-email")
 def send_email_report(
-    email: str = Query(..., description="Email address to send the report to"),
+    email: Optional[str] = Query(None, description="Email address(es) to send the report to"),
     request_id: Optional[str] = Query(None),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
@@ -123,7 +150,7 @@ def send_email_report(
         # 1. Generate the Excel File
         filters = build_filters(request_id, date_from, date_to, None, q, page=1, page_size=200)
         filters.status_list = status_list
-        rows = repository.export_rows(filters)
+        rows = repository.export_rows_for_email(filters)
         content = build_excel(
             rows,
             filters,
@@ -133,14 +160,47 @@ def send_email_report(
         )
         
         # 2. Setup Email Meta
-        filename = f"Earnest_CRM_Report_{datetime.now().strftime('%Y%m%d')}.xlsx"
-        subject = f"Earnest CRM Report - {datetime.now().strftime('%b %d, %Y')}"
-        body = "Hello,\n\nPlease find the requested CRM Request Status Report attached.\n\nThank you,\nEarnest Automated Systems"
+        report_date = date_from.strftime("%b %d, %Y") if date_from else datetime.now().strftime("%b %d, %Y")
+        filename = f"Algospring_CRM_Report_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        subject = f"CRM Request Status Report - {report_date}"
+        body = (
+            "Dear Amit,\n\n"
+            f"Please find attached the CRM Request Status Report for {report_date}. "
+            "This report includes Success and Failed requests for the specified date.\n\n"
+            "If you require additional fields or a different date range, please let us know.\n\n"
+            "Sincerely,\n"
+            "Algospring Automated System"
+        )
         
-        # 3. Send Email via Microsoft Graph
+        # 3. Resolve recipients
+        to_emails: list[str]
+        cc_emails: list[str]
+        bcc_emails: list[str]
+        if email:
+            to_emails = _split_emails(email)
+            cc_emails = []
+            bcc_emails = []
+        else:
+            recipients = _load_email_recipients(Path(settings.email_recipients_file))
+            to_emails = recipients["to"]
+            cc_emails = recipients["cc"]
+            bcc_emails = recipients["bcc"]
+
+        if not to_emails:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Recipient list is empty. Provide 'email' or update "
+                    f"{settings.email_recipients_file}."
+                ),
+            )
+
+        # 4. Send Email via Microsoft Graph
         email_service = MicrosoftGraphEmailService(settings)
         email_service.send_report_email(
-            to_email=email,
+            to_email=to_emails,
+            cc_emails=cc_emails,
+            bcc_emails=bcc_emails,
             subject=subject,
             body=body,
             file_bytes=content,

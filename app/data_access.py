@@ -96,6 +96,14 @@ class SqlServerRepository:
         parts = self.settings.db_table.split(".")
         return ".".join(self._quote_identifier(part.strip("[] ")) for part in parts)
 
+    def _submissions_table_name(self) -> str:
+        parts = "dbo.Submissions".split(".")
+        return ".".join(self._quote_identifier(part.strip("[] ")) for part in parts)
+
+    def _outlets_table_name(self) -> str:
+        parts = "dbo.Outlets".split(".")
+        return ".".join(self._quote_identifier(part.strip("[] ")) for part in parts)
+
     def _column(self, name: str) -> str:
         return self._quote_identifier(name.strip("[] "))
 
@@ -105,12 +113,13 @@ class SqlServerRepository:
             raise ValueError(f"Unsafe SQL identifier configured: {identifier}")
         return f"[{identifier}]"
 
-    def _where_clause(self, filters: RequestFilters) -> tuple[str, list[Any]]:
+    def _where_clause(self, filters: RequestFilters, table_alias: str | None = None) -> tuple[str, list[Any]]:
         clauses: list[str] = []
         params: list[Any] = []
-        created_col = self._column(self.settings.created_at_column)
-        request_col = self._column(self.settings.request_id_column)
-        status_col = self._column(self.settings.status_column)
+        prefix = f"{table_alias}." if table_alias else ""
+        created_col = f"{prefix}{self._column(self.settings.created_at_column)}"
+        request_col = f"{prefix}{self._column(self.settings.request_id_column)}"
+        status_col = f"{prefix}{self._column(self.settings.status_column)}"
 
         if filters.date_from:
             clauses.append(f"{created_col} >= ?")
@@ -193,6 +202,48 @@ class SqlServerRepository:
             cursor = conn.cursor().execute(f"SELECT * FROM {table}{where} ORDER BY {created_col} DESC", params)
             return self._cursor_rows(cursor)
 
+    def export_rows_for_email(self, filters: RequestFilters) -> list[dict[str, Any]]:
+        where, params = self._where_clause(filters, table_alias="c")
+        table = self._table_name()
+        submissions_table = self._submissions_table_name()
+        outlets_table = self._outlets_table_name()
+        created_col = self._column(self.settings.created_at_column)
+        request_col = self._column(self.settings.request_id_column)
+        sub_request_col = self._column("RequestId")
+        sub_document_col = self._column("DocumentCount")
+        sub_is_deleted_col = self._column("IsDeleted")
+        sub_outlet_col = self._column("OutletId")
+        sub_mode_col = self._column("Mode")
+        sub_received_col = self._column("ReceivedAt")
+        sub_processed_col = self._column("ProcessedAt")
+        outlet_id_col = self._column("OutletId")
+        outlet_name_col = self._column("Name")
+        submission_id_col = self._column("Id")
+
+        submissions_subquery = (
+            "SELECT SubRequestId, OutletId, Mode, DocumentCount FROM ("
+            f"SELECT {sub_request_col} AS SubRequestId, {sub_outlet_col} AS OutletId, {sub_mode_col} AS Mode, "
+            f"{sub_document_col} AS DocumentCount, "
+            f"ROW_NUMBER() OVER (PARTITION BY {sub_request_col} ORDER BY COALESCE({sub_processed_col}, {sub_received_col}) DESC, {submission_id_col} DESC) AS RowNum "
+            f"FROM {submissions_table} "
+            f"WHERE {sub_is_deleted_col} = 0"
+            ") AS ranked WHERE RowNum = 1"
+        )
+
+        query = (
+            "SELECT c.*, s.DocumentCount, "
+            f"CASE WHEN UPPER(s.Mode) = 'EMAIL' THEN 'ATT' ELSE o.{outlet_name_col} END AS OutletName "
+            f"FROM {table} AS c "
+            f"LEFT JOIN ({submissions_subquery}) AS s ON s.SubRequestId = c.{request_col} "
+            f"LEFT JOIN {outlets_table} AS o ON o.{outlet_id_col} = s.OutletId "
+            f"{where} "
+            f"ORDER BY c.{created_col} DESC"
+        )
+
+        with self._connect() as conn:
+            cursor = conn.cursor().execute(query, params)
+            return self._cursor_rows(cursor)
+
     def retry_request(self, request_id: str) -> dict[str, Any] | None:
         table = self._table_name()
         request_col = self._column(self.settings.request_id_column)
@@ -263,6 +314,9 @@ class CachedRepository:
 
     def export_rows(self, filters: RequestFilters) -> list[dict[str, Any]]:
         return self.repository.export_rows(filters)
+
+    def export_rows_for_email(self, filters: RequestFilters) -> list[dict[str, Any]]:
+        return self.repository.export_rows_for_email(filters)
 
     def retry_request(self, request_id: str) -> dict[str, Any] | None:
         row = self.repository.retry_request(request_id)

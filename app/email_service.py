@@ -107,17 +107,44 @@ class MicrosoftGraphEmailService:
             raise Exception("GRAPH_SENDER_EMAIL is required when using GRAPH_CLIENT_SECRET app-only auth.")
         return "https://graph.microsoft.com/v1.0/me/sendMail"
 
+    @staticmethod
+    def _split_emails(value: str) -> list[str]:
+        return [item.strip() for item in value.replace(";", ",").split(",") if item.strip()]
+
+    def _normalize_emails(self, emails: str | list[str] | None) -> list[str]:
+        if not emails:
+            return []
+        if isinstance(emails, list):
+            output: list[str] = []
+            for item in emails:
+                if item:
+                    output.extend(self._split_emails(str(item)))
+            return output
+        return self._split_emails(str(emails))
+
+    @staticmethod
+    def _build_recipients(emails: list[str]) -> list[dict[str, dict[str, str]]]:
+        return [{"emailAddress": {"address": email}} for email in emails]
+
     def send_report_email(
         self,
-        to_email: str,
+        to_email: str | list[str],
         subject: str,
         body: str,
         file_bytes: bytes,
         filename: str,
+        cc_emails: str | list[str] | None = None,
+        bcc_emails: str | list[str] | None = None,
         allow_device_flow: bool = False,
     ):
         token = self._get_access_token(allow_device_flow=allow_device_flow)
         endpoint = self._send_mail_endpoint()
+
+        to_list = self._normalize_emails(to_email)
+        if not to_list:
+            raise Exception("At least one recipient email address is required.")
+        cc_list = self._normalize_emails(cc_emails)
+        bcc_list = self._normalize_emails(bcc_emails)
         
         email_data = {
             "message": {
@@ -126,13 +153,7 @@ class MicrosoftGraphEmailService:
                     "contentType": "Text",
                     "content": body
                 },
-                "toRecipients": [
-                    {
-                        "emailAddress": {
-                            "address": to_email
-                        }
-                    }
-                ],
+                "toRecipients": self._build_recipients(to_list),
                 "attachments": [
                     {
                         "@odata.type": "#microsoft.graph.fileAttachment",
@@ -144,6 +165,11 @@ class MicrosoftGraphEmailService:
             },
             "saveToSentItems": "true"
         }
+
+        if cc_list:
+            email_data["message"]["ccRecipients"] = self._build_recipients(cc_list)
+        if bcc_list:
+            email_data["message"]["bccRecipients"] = self._build_recipients(bcc_list)
 
         headers = {
             "Authorization": f"Bearer {token}",

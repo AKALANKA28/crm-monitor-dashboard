@@ -62,6 +62,8 @@ class Settings(BaseModel):
     graph_refresh_token: str = os.getenv("GRAPH_REFRESH_TOKEN") or os.getenv("OUTLOOK_REFRESH_TOKEN", "")
     graph_http_timeout: int = _env_int("GRAPH_HTTP_TIMEOUT", 30)
 
+    email_recipients_file: str = os.getenv("EMAIL_RECIPIENTS_FILE", "config/email_recipients.ini")
+
     # Backward-compatible aliases for older code/config.
     outlook_client_id: str = graph_client_id
     outlook_tenant_id: str = graph_tenant_id

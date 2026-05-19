@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import datetime
+from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -88,17 +88,17 @@ EMAIL_FIELD_ALIASES = {
     "Outlet Name": ["OutletName", "POS", "Location"],
     "Request ID": ["RequestId", "RequestID", "request_id"],
     "Emirate": ["Emirate"],
-    "Email": ["Email", "Email_CRM", "EmailCRM"],
-    "Mobile Number": ["PhoneNumber", "InsuredMobileNumber", "Mobile_CRM", "MobileNumber", "MobileNo"],
-    "Vehicle CV": ["VehicleCV"],
-    "Registration Emirates": ["RegistrationEmirates", "RegistrationEmirate"],
+    "Email": ["Email_CRM"],
+    "Mobile Number": ["Mobile_CRM"],
+    "Vehicle CV": ["VehicleValue"],
+    "Registration Emirates": ["Emirate"],
     "Bank Financed Y/N": ["BankFinancedYN", "BankFinanced"],
     "Bank Name": ["BankName"],
     "No of Documents": ["NoOfDocuments", "DocumentCount", "DocumentsCount"],
     "Submitted ON": ["SubmittedOn", "SubmittedDate", "CreatedAt", "GenerationDate"],
     "Bot Status(Passed/Error)": ["BotStatus", "CRMStatus", "Status", "AppStatus"],
     "Bot Error Comment": ["BotErrorComment", "LastError", "ErrorComment"],
-    "Pass Status(Lead / Prospect)": ["Classification", "PassStatus", "LeadProspectStatus"],
+    "Pass Status(Lead / Prospect)": ["AppStatus"],
     "CRM_Client Type *": ["ClientType"],
     "CRM_First Name *": ["FirstName"],
     "CRM_Last Name *": ["LastName"],
@@ -125,7 +125,15 @@ EMAIL_FIELD_ALIASES = {
     "CRM_TCF No": ["TCFNo", "TcfNo"],
 }
 
-EMAIL_COMPUTED_FIELDS = {"Bank Financed Y/N"}
+EMAIL_COMPUTED_FIELDS = {"Bank Financed Y/N", "Vehicle CV", "Registration Emirates"}
+
+EMAIL_DATE_FIELDS = {
+    "Submitted ON",
+    "CRM_Date of Birth",
+    "CRM_License Issue Date",
+    "CRM_License Expiry Date",
+    "CRM_Date of First Registration",
+}
 
 class MissingEmailFieldsError(ValueError):
     def __init__(self, missing_fields: list[str], available_columns: list[str]):
@@ -182,10 +190,10 @@ def _build_summary_sheet(ws, rows: list[dict[str, Any]], filters: RequestFilters
 
 def _build_header(ws, settings: Settings) -> None:
     _style_cells(ws, "A1:I3", fill=BRAND_COLORS["white"], border=BRAND_COLORS["border"])
-    
+
     # Logo in Column A only (Row 1 to 3)
     ws.merge_cells("A1:A3")
-    
+
     # Title in Column B to I
     ws.merge_cells("B1:I3")
     ws["B1"] = "CRM Monitor Report"
@@ -258,7 +266,7 @@ def _apply_requests_table_style(ws, max_row: int, max_col: int, status_col_idx: 
     for cell in ws[1]:
         cell.fill = _fill(BRAND_COLORS["slate"])
         cell.font = Font(name="Inter", size=10, color=BRAND_COLORS["white"], bold=True)
-        cell.alignment = Alignment(horizontal="left", vertical="center")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = Border(bottom=thin)
 
     row_fill_white = _fill(BRAND_COLORS["white"])
@@ -336,10 +344,25 @@ def _email_template_table(
 def _email_field_value(field: str, row: dict[str, Any], column_map: dict[str, str]) -> Any:
     if field == "Bank Financed Y/N":
         return _bank_financed_value(row)
-    column = column_map.get(field)
-    if column:
-        return row.get(column, "")
-    return ""
+
+    value: Any = ""
+    if field == "Vehicle CV":
+        value = row.get("VehicleValue") or row.get("Amount") or ""
+    elif field == "Registration Emirates":
+        value = row.get("Emirate") or row.get("RegistrationEmirates") or ""
+    elif field == "Email":
+        value = row.get("Email_CRM") or row.get("EmailCRM") or row.get("Email") or ""
+    elif field == "Mobile Number":
+        value = row.get("Mobile_CRM") or row.get("InsuredMobileNumber") or row.get("PhoneNumber") or ""
+    else:
+        column = column_map.get(field)
+        if column:
+            value = row.get(column, "")
+
+    if field in EMAIL_DATE_FIELDS:
+        return _format_date_only(value)
+
+    return value
 
 
 def _bank_financed_value(row: dict[str, Any]) -> str:
@@ -356,6 +379,22 @@ def _bank_financed_value(row: dict[str, Any]) -> str:
             return "N"
 
     return ""
+
+
+def _format_date_only(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+
+    text = str(value).strip()
+    if not text:
+        return ""
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        return text[:10]
+    return text
 
 def _email_column_map(rows: list[dict[str, Any]]) -> dict[str, str]:
     available_columns = _available_columns(rows)

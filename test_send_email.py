@@ -36,6 +36,36 @@ def _parse_date(value: str | None) -> date | None:
     return date.fromisoformat(value)
 
 
+RECIPIENT_KEY_MAP = {
+    "recipient_emails": "to",
+    "cc_emails": "cc",
+    "bcc_emails": "bcc",
+}
+
+
+def _split_emails(value: str) -> list[str]:
+    return [item.strip() for item in value.replace(";", ",").split(",") if item.strip()]
+
+
+def _load_email_recipients(path: Path) -> dict[str, list[str]]:
+    recipients = {"to": [], "cc": [], "bcc": []}
+    if not path.exists():
+        return recipients
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith(";"):
+            continue
+        if "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        normalized_key = key.strip().lower()
+        target = RECIPIENT_KEY_MAP.get(normalized_key)
+        if not target:
+            continue
+        recipients[target].extend(_split_emails(value))
+    return recipients
+
+
 def build_sample_attachment() -> tuple[bytes, str]:
     settings = get_settings()
     filters = RequestFilters(date_from=date.today(), date_to=date.today())
@@ -46,7 +76,7 @@ def build_sample_attachment() -> tuple[bytes, str]:
         export_profile="email",
         allow_missing_email_fields=True,
     )
-    filename = f"Earnest_CRM_Email_Test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    filename = f"Algospring_CRM_Email_Test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     return content, filename
 
 
@@ -72,7 +102,7 @@ def build_db_attachment(
     if status_list:
         filters.status_list = status_list
 
-    rows = repository.export_rows(filters)
+    rows = repository.export_rows_for_email(filters)
     content = build_excel(
         rows,
         filters,
@@ -80,7 +110,7 @@ def build_db_attachment(
         export_profile="email",
         allow_missing_email_fields=True,
     )
-    filename = f"Earnest_CRM_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    filename = f"Algospring_CRM_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     return content, filename
 
 
@@ -99,20 +129,33 @@ def main() -> None:
         "--status",
         help="Comma-separated statuses (default: Success,Failed).",
     )
+    parser.add_argument(
+        "--recipients-file",
+        help="Path to recipients file (defaults to EMAIL_RECIPIENTS_FILE).",
+    )
     parser.add_argument("--sample", action="store_true", help="Use a sample row instead of DB data.")
     args = parser.parse_args()
 
+    report_date: str
     if args.sample:
         content, filename = build_sample_attachment()
+        report_date = datetime.now().strftime("%b %d, %Y")
     else:
         date_from = _parse_date(args.date_from)
         date_to = _parse_date(args.date_to)
-        status_list = None
+        if date_from is None and date_to is None:
+            yesterday = date.today() - timedelta(days=1)
+            date_from = yesterday
+            date_to = yesterday
+        report_date = (date_from or date.today()).strftime("%b %d, %Y")
+
         if args.status:
             status_list = [value.strip() for value in args.status.split(",") if value.strip()]
         else:
             status_list = ["Success", "Failed"]
+
         content, filename = build_db_attachment(date_from, date_to, status_list)
+
     output_path = Path(args.out)
     output_path.write_bytes(content)
     print(f"Built test attachment: {output_path.resolve()}")
@@ -121,22 +164,38 @@ def main() -> None:
         print("Dry run only. Add --send --to recipient@example.com to send the email.")
         return
 
-    if not args.to:
-        raise SystemExit("--to is required when using --send")
-
     settings = get_settings()
     if not settings.graph_client_id:
         raise SystemExit("GRAPH_CLIENT_ID is missing in .env")
 
+    recipients_file = Path(args.recipients_file or settings.email_recipients_file)
+    if args.to:
+        to_emails = _split_emails(args.to)
+        cc_emails: list[str] = []
+        bcc_emails: list[str] = []
+    else:
+        recipients = _load_email_recipients(recipients_file)
+        to_emails = recipients["to"]
+        cc_emails = recipients["cc"]
+        bcc_emails = recipients["bcc"]
+        if not to_emails:
+            raise SystemExit(
+                f"Recipient list is empty. Provide --to or update {recipients_file}."
+            )
+
     service = MicrosoftGraphEmailService(settings)
     service.send_report_email(
-        to_email=args.to,
-        subject=f"Earnest CRM Email Test - {datetime.now().strftime('%b %d, %Y')}",
+        to_email=to_emails,
+        cc_emails=cc_emails,
+        bcc_emails=bcc_emails,
+        subject=f"CRM Request Status Report - {report_date}",
         body=(
-            "Hello,\n\n"
-            "This is a test email for the Earnest CRM report attachment.\n\n"
-            "Thank you,\n"
-            "Earnest Automated Systems"
+            "Dear Team,\n\n"
+            f"Please find attached the CRM Request Status Report for {report_date}. "
+            "This report includes Success and Failed requests for the specified date.\n\n"
+            "If you require additional fields or a different date range, please let us know.\n\n"
+            "Sincerely,\n"
+            "Algospring Automated System"
         ),
         file_bytes=content,
         filename=filename,
