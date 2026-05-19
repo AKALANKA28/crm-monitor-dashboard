@@ -24,6 +24,7 @@
 
   --shadow-soft: 0 10px 40px -10px rgba(30, 41, 59, 0.03);
   --shadow-sm: 0 4px 12px -4px rgba(0, 0, 0, 0.04);
+  --sticky-actions-width: 120px;
 
   font-family:
     "Inter",
@@ -466,6 +467,35 @@ tbody tr:last-child td {
   border-bottom: none;
 }
 tbody tr:hover {
+  background: #f8fafc;
+}
+
+th.sticky-col,
+td.sticky-col {
+  position: sticky;
+  background: var(--surface);
+  z-index: 2;
+}
+th.sticky-col {
+  background: #f8fafc;
+  z-index: 4;
+}
+
+th.sticky-actions,
+td.sticky-actions {
+  left: 0;
+  width: var(--sticky-actions-width);
+  min-width: var(--sticky-actions-width);
+  box-shadow: 2px 0 0 var(--border-light);
+}
+
+th.sticky-request,
+td.sticky-request {
+  left: var(--sticky-actions-width);
+  box-shadow: 2px 0 0 var(--border-light);
+}
+
+tbody tr:hover td.sticky-col {
   background: #f8fafc;
 }
 

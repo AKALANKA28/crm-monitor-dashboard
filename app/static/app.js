@@ -4,6 +4,7 @@ const state = {
   total: 0,
   columns: [],
   isLoading: false,
+  lastColumnQuery: "",
 };
 
 const AUTO_REFRESH_MS = 10000;
@@ -14,6 +15,68 @@ const statusConfig = {
   Pending: { countId: "pendingCount", className: "pending" },
   "In Progress": { countId: "inProgressCount", className: "progress" },
 };
+
+function normalizeColumnKey(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function findRequestIdColumn(columns) {
+  const target = "requestid";
+  return columns.find((column) => normalizeColumnKey(column) === target);
+}
+
+function findColumnMatch(query, columns) {
+  const normalizedQuery = normalizeColumnKey(query);
+  if (!normalizedQuery) return null;
+
+  const normalizedColumns = columns.map((column) => ({
+    name: column,
+    key: normalizeColumnKey(column),
+  }));
+
+  const exact = normalizedColumns.find((col) => col.key === normalizedQuery);
+  if (exact) return exact.name;
+
+  const startsWith = normalizedColumns.find((col) =>
+    col.key.startsWith(normalizedQuery),
+  );
+  if (startsWith) return startsWith.name;
+
+  const includes = normalizedColumns.find((col) =>
+    col.key.includes(normalizedQuery),
+  );
+  return includes ? includes.name : null;
+}
+
+function scrollToColumnMatch(query, columns) {
+  const normalizedQuery = normalizeColumnKey(query);
+  if (!normalizedQuery) {
+    state.lastColumnQuery = "";
+    return;
+  }
+  if (normalizedQuery === state.lastColumnQuery) return;
+
+  const match = findColumnMatch(query, columns);
+  state.lastColumnQuery = normalizedQuery;
+  if (!match) return;
+
+  const tableScroll = document.querySelector(".table-scroll");
+  if (!tableScroll) return;
+
+  const headerCell = tableScroll.querySelector(
+    `thead th[data-col-key="${normalizeColumnKey(match)}"]`,
+  );
+  if (!headerCell) return;
+
+  const stickyWidth = Array.from(
+    tableScroll.querySelectorAll("thead th.sticky-col"),
+  ).reduce((sum, cell) => sum + cell.offsetWidth, 0);
+
+  const targetLeft = headerCell.offsetLeft - stickyWidth;
+  tableScroll.scrollTo({ left: Math.max(0, targetLeft), behavior: "smooth" });
+}
 
 function formatNumber(value) {
   return new Intl.NumberFormat().format(Number(value || 0));
@@ -38,11 +101,12 @@ function getFilters(includePage = true) {
   const status = document.getElementById("status").value;
   const q = document.getElementById("searchText").value.trim();
   const pageSize = document.getElementById("pageSize").value;
+  const columnMatch = findColumnMatch(q, state.columns);
 
   if (dateFrom) params.set("date_from", dateFrom);
   if (dateTo) params.set("date_to", dateTo);
   if (status) params.set("status", status);
-  if (q) params.set("q", q);
+  if (q && !columnMatch) params.set("q", q);
   params.set("page_size", pageSize);
 
   if (includePage) params.set("page", state.page);
@@ -98,6 +162,7 @@ function renderTable(data) {
   const rows = data.rows || [];
   const columns = data.columns || [];
   state.columns = columns;
+  const requestIdColumn = findRequestIdColumn(columns);
 
   const total = Number(data.total || 0);
   const page = Number(data.page || 1);
@@ -110,25 +175,36 @@ function renderTable(data) {
   document.getElementById("prevBtn").disabled = page <= 1;
   document.getElementById("nextBtn").disabled = page * pageSize >= total;
 
+  const visibleColumns = ["Actions", ...columns];
+
+  thead.innerHTML = `
+        <tr>
+            ${visibleColumns
+              .map((column) => {
+                const className =
+                  column === "Actions"
+                    ? "sticky-col sticky-actions"
+                    : column === requestIdColumn
+                      ? "sticky-col sticky-request"
+                      : "";
+                const classAttr = className ? ` class="${className}"` : "";
+                const keyAttr = ` data-col-key="${normalizeColumnKey(column)}"`;
+                return `<th${classAttr}${keyAttr}>${escapeHtml(column)}</th>`;
+              })
+              .join("")}
+        </tr>
+    `;
+
   if (!rows.length) {
-    thead.innerHTML = "";
     tbody.innerHTML = `
             <tr>
-                <td class="empty-state" style="text-align: center; padding: 40px; color: #8ca3ba;">
+                <td class="empty-state" colspan="${visibleColumns.length}" style="text-align: center; padding: 40px; color: #8ca3ba;">
                     No requests matched the selected filters.
                 </td>
             </tr>
         `;
     return;
   }
-
-  const visibleColumns = ["Actions", ...columns];
-
-  thead.innerHTML = `
-        <tr>
-            ${visibleColumns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}
-        </tr>
-    `;
 
   tbody.innerHTML = rows
     .map((row) => {
@@ -139,17 +215,21 @@ function renderTable(data) {
         ? `<button class="btn btn-danger retry-btn" data-request-id="${escapeHtml(requestId)}">Retry</button>`
         : `<span class="text-disabled">No action</span>`;
 
+      const actionCell = `<td class="sticky-col sticky-actions">${retryButton}</td>`;
       const cells = columns
         .map((column) => {
           const value = row[column];
+          const className =
+            column === requestIdColumn ? "sticky-col sticky-request" : "";
+          const classAttr = className ? ` class="${className}"` : "";
           if (column === "CRMStatus") {
-            return `<td>${badgeForStatus(value)}</td>`;
+            return `<td${classAttr}>${badgeForStatus(value)}</td>`;
           }
-          return `<td title="${escapeHtml(value)}">${escapeHtml(value)}</td>`;
+          return `<td${classAttr} title="${escapeHtml(value)}">${escapeHtml(value)}</td>`;
         })
         .join("");
 
-      return `<tr><td>${retryButton}</td>${cells}</tr>`;
+      return `<tr>${actionCell}${cells}</tr>`;
     })
     .join("");
 
@@ -209,6 +289,10 @@ async function loadDashboard(page = 1) {
     const data = await response.json();
     updateSummary(data);
     renderTable(data);
+    scrollToColumnMatch(
+      document.getElementById("searchText").value.trim(),
+      data.columns || [],
+    );
   } catch (error) {
     setMessage(error.message, "error");
     document.getElementById("tableMeta").textContent = "Error loading";
