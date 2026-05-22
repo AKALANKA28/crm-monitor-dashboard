@@ -23,6 +23,10 @@ from app.data_access import RequestFilters, STATUS_ORDER, _normalize_status_coun
 EXCEL_POINTS_PER_PIXEL = 0.75
 REQUEST_ROW_HEIGHT_PIXELS = 27
 REQUEST_ROW_HEIGHT_POINTS = REQUEST_ROW_HEIGHT_PIXELS * EXCEL_POINTS_PER_PIXEL
+ERROR_COMMENT_COLUMN = "Bot Error Comment"
+ERROR_COMMENT_COLUMN_WIDTH = 70
+ERROR_COMMENT_WRAP_CHARS = 70
+ERROR_COMMENT_MAX_ROW_HEIGHT = 150
 
 BRAND_COLORS = {
     "brand_blue": "00385F",
@@ -264,13 +268,14 @@ def _apply_requests_table_style(ws, max_row: int, max_col: int, status_col_idx: 
     ws.auto_filter.ref = f"A1:{get_column_letter(max_col)}{max_row}"
 
     thin = Side(style="thin", color=BRAND_COLORS["border"])
+    error_comment_col_idx = _header_column_index(ws, ERROR_COMMENT_COLUMN)
     for row_idx in range(1, max_row + 1):
         ws.row_dimensions[row_idx].height = REQUEST_ROW_HEIGHT_POINTS
 
     for cell in ws[1]:
         cell.fill = _fill(BRAND_COLORS["slate"])
         cell.font = Font(name="Inter", size=10, color=BRAND_COLORS["white"], bold=True)
-        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = Border(bottom=thin)
 
     row_fill_white = _fill(BRAND_COLORS["white"])
@@ -278,8 +283,18 @@ def _apply_requests_table_style(ws, max_row: int, max_col: int, status_col_idx: 
         for cell in row:
             cell.fill = row_fill_white
             cell.border = Border(bottom=thin, top=thin, left=thin, right=thin)
-            cell.alignment = Alignment(vertical="center")
+            if error_comment_col_idx and cell.column == error_comment_col_idx:
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+            else:
+                cell.alignment = Alignment(vertical="center")
             cell.font = Font(name="Inter", color=BRAND_COLORS["text"])
+        if error_comment_col_idx:
+            comment_cell = row[error_comment_col_idx - 1]
+            wrapped_lines = _wrapped_line_count(comment_cell.value)
+            ws.row_dimensions[comment_cell.row].height = min(
+                ERROR_COMMENT_MAX_ROW_HEIGHT,
+                max(REQUEST_ROW_HEIGHT_POINTS, wrapped_lines * 15),
+            )
         if status_col_idx:
             status_cell = row[status_col_idx - 1]
             fill, font_color = STATUS_STYLES.get(_canonical_status(status_cell.value), (None, None))
@@ -290,10 +305,26 @@ def _apply_requests_table_style(ws, max_row: int, max_col: int, status_col_idx: 
 
     for col_idx in range(1, max_col + 1):
         letter = get_column_letter(col_idx)
+        if error_comment_col_idx and col_idx == error_comment_col_idx:
+            ws.column_dimensions[letter].width = ERROR_COMMENT_COLUMN_WIDTH
+            continue
         max_length = 12
         for cell in ws[letter]:
             max_length = max(max_length, min(len(str(cell.value or "")), 45))
         ws.column_dimensions[letter].width = max_length + 3
+
+def _header_column_index(ws, target: str) -> int | None:
+    normalized_target = _normalize_column(target)
+    for index, cell in enumerate(ws[1], start=1):
+        if _normalize_column(str(cell.value or "")) == normalized_target:
+            return index
+    return None
+
+def _wrapped_line_count(value: Any) -> int:
+    text = str(value or "")
+    if not text:
+        return 1
+    return sum(max(1, (len(part) // ERROR_COMMENT_WRAP_CHARS) + 1) for part in text.splitlines() or [""])
 
 def _status_counts(rows: list[dict[str, Any]], settings: Settings) -> dict[str, int]:
     counts: dict[str, int] = {}
