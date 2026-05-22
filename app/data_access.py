@@ -104,6 +104,10 @@ class SqlServerRepository:
         parts = "dbo.Outlets".split(".")
         return ".".join(self._quote_identifier(part.strip("[] ")) for part in parts)
 
+    def _validation_failures_table_name(self) -> str:
+        parts = "dbo.RequestsValidationFailures".split(".")
+        return ".".join(self._quote_identifier(part.strip("[] ")) for part in parts)
+
     def _column(self, name: str) -> str:
         return self._quote_identifier(name.strip("[] "))
 
@@ -207,6 +211,7 @@ class SqlServerRepository:
         table = self._table_name()
         submissions_table = self._submissions_table_name()
         outlets_table = self._outlets_table_name()
+        validation_failures_table = self._validation_failures_table_name()
         created_col = self._column(self.settings.created_at_column)
         request_col = self._column(self.settings.request_id_column)
         sub_request_col = self._column("RequestId")
@@ -219,6 +224,9 @@ class SqlServerRepository:
         outlet_id_col = self._column("OutletId")
         outlet_name_col = self._column("Name")
         submission_id_col = self._column("Id")
+        validation_request_col = self._column("RequestId")
+        validation_error_col = self._column("ValidationError")
+        validation_id_col = self._column("Id")
 
         submissions_subquery = (
             "SELECT SubRequestId, OutletId, Mode, DocumentCount FROM ("
@@ -230,12 +238,22 @@ class SqlServerRepository:
             ") AS ranked WHERE RowNum = 1"
         )
 
+        validation_failures_subquery = (
+            f"SELECT {validation_request_col} AS ValidationRequestId, "
+            f"STRING_AGG(CAST({validation_error_col} AS NVARCHAR(MAX)), NCHAR(10)) "
+            f"WITHIN GROUP (ORDER BY {validation_id_col}) AS ValidationError "
+            f"FROM {validation_failures_table} "
+            f"WHERE {validation_error_col} IS NOT NULL "
+            f"GROUP BY {validation_request_col}"
+        )
+
         query = (
-            "SELECT c.*, s.DocumentCount, "
+            "SELECT c.*, s.DocumentCount, vf.ValidationError, "
             f"CASE WHEN UPPER(s.Mode) = 'EMAIL' THEN 'ATT' ELSE o.{outlet_name_col} END AS OutletName "
             f"FROM {table} AS c "
             f"LEFT JOIN ({submissions_subquery}) AS s ON s.SubRequestId = c.{request_col} "
             f"LEFT JOIN {outlets_table} AS o ON o.{outlet_id_col} = s.OutletId "
+            f"LEFT JOIN ({validation_failures_subquery}) AS vf ON vf.ValidationRequestId = c.{request_col} "
             f"{where} "
             f"ORDER BY c.{created_col} DESC"
         )
