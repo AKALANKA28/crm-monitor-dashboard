@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.data_access import RequestFilters, get_repository
+from app.email_report import DEFAULT_EMAIL_STATUSES, pending_as_failed_rows
 from app.email_service import MicrosoftGraphEmailService
 from app.excel_export import EMAIL_REQUEST_FIELDS, build_excel
 
@@ -92,6 +93,10 @@ def build_db_attachment(
         yesterday = date.today() - timedelta(days=1)
         date_from = yesterday
         date_to = yesterday
+    elif date_from is None:
+        date_from = date_to
+    elif date_to is None:
+        date_to = date_from
 
     filters = RequestFilters(
         date_from=date_from,
@@ -103,8 +108,12 @@ def build_db_attachment(
         filters.status_list = status_list
 
     rows = repository.export_rows_for_email(filters)
+    report_rows, pending_as_failed_count = pending_as_failed_rows(rows, settings.status_column)
+    print(f"Rows fetched: {len(rows)}")
+    print(f"Date filter column: {settings.created_at_column}")
+    print(f"Pending rows included as Failed: {pending_as_failed_count}")
     content = build_excel(
-        rows,
+        report_rows,
         filters,
         settings,
         export_profile="email",
@@ -127,7 +136,7 @@ def main() -> None:
     parser.add_argument("--date-to", help="Filter end date (YYYY-MM-DD). Defaults to yesterday.")
     parser.add_argument(
         "--status",
-        help="Comma-separated statuses (default: Success,Failed).",
+        help="Comma-separated statuses (default: Success,Failed,Pending).",
     )
     parser.add_argument(
         "--recipients-file",
@@ -147,12 +156,19 @@ def main() -> None:
             yesterday = date.today() - timedelta(days=1)
             date_from = yesterday
             date_to = yesterday
+        elif date_from is None:
+            date_from = date_to
+        elif date_to is None:
+            date_to = date_from
         report_date = (date_from or date.today()).strftime("%b %d, %Y")
 
         if args.status:
             status_list = [value.strip() for value in args.status.split(",") if value.strip()]
         else:
-            status_list = ["Success", "Failed"]
+            status_list = DEFAULT_EMAIL_STATUSES
+
+        print(f"Server date: {date.today().isoformat()}")
+        print(f"Report date range: {date_from.isoformat()} to {date_to.isoformat()}")
 
         content, filename = build_db_attachment(date_from, date_to, status_list)
 
@@ -192,7 +208,8 @@ def main() -> None:
         body=(
             "Dear Team,\n\n"
             f"Please find attached the CRM Request Status Report for {report_date}. "
-            "This report includes Success and Failed requests for the specified date.\n\n"
+            "This report includes Success and Failed requests for the specified date. "
+            "Pending requests are included under Failed.\n\n"
             "If you require additional fields or a different date range, please let us know.\n\n"
             "Sincerely,\n"
             "Algospring Automated System"

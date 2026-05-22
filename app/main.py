@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.config import get_settings
 from app.data_access import RequestFilters, get_repository
+from app.email_report import DEFAULT_EMAIL_STATUSES, pending_as_failed_rows
 from app.excel_export import MissingEmailFieldsError, build_excel
 from app.email_service import MicrosoftGraphEmailService
 
@@ -28,6 +29,9 @@ RECIPIENT_KEY_MAP = {
     "cc_emails": "cc",
     "bcc_emails": "bcc",
 }
+
+def _default_email_report_date() -> date:
+    return date.today() - timedelta(days=1)
 
 def _split_emails(value: str) -> list[str]:
     return [item.strip() for item in value.replace(";", ",").split(",") if item.strip()]
@@ -109,8 +113,15 @@ def export_excel(
     q: Optional[str] = Query(None),
 ):
     filters = build_filters(request_id, date_from, date_to, status, q, page=1, page_size=200)
-    rows = repository.export_rows(filters)
-    content = build_excel(rows, filters, settings)
+    rows = repository.export_rows_for_email(filters)
+    report_rows, _ = pending_as_failed_rows(rows, settings.status_column)
+    content = build_excel(
+        report_rows,
+        filters,
+        settings,
+        export_profile="email",
+        allow_missing_email_fields=True,
+    )
     filename = f"crm_requests_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     headers = {"Content-Disposition": f"attachment; filename={filename}"}
     return StreamingResponse(
@@ -137,22 +148,27 @@ def send_email_report(
             )
 
         if date_from is None and date_to is None:
-            yesterday = date.today() - timedelta(days=1)
-            date_from = yesterday
-            date_to = yesterday
+            report_for = _default_email_report_date()
+            date_from = report_for
+            date_to = report_for
+        elif date_from is None:
+            date_from = date_to
+        elif date_to is None:
+            date_to = date_from
 
         status_list: list[str] | None = None
         if status:
             status_list = [value.strip() for value in status.split(",") if value.strip()]
         else:
-            status_list = ["Success", "Failed"]
+            status_list = DEFAULT_EMAIL_STATUSES
 
         # 1. Generate the Excel File
         filters = build_filters(request_id, date_from, date_to, None, q, page=1, page_size=200)
         filters.status_list = status_list
         rows = repository.export_rows_for_email(filters)
+        report_rows, pending_as_failed_count = pending_as_failed_rows(rows, settings.status_column)
         content = build_excel(
-            rows,
+            report_rows,
             filters,
             settings,
             export_profile="email",
@@ -160,13 +176,15 @@ def send_email_report(
         )
         
         # 2. Setup Email Meta
-        report_date = date_from.strftime("%b %d, %Y") if date_from else datetime.now().strftime("%b %d, %Y")
-        filename = f"Algospring_CRM_Report_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        now = datetime.now()
+        report_date = date_from.strftime("%b %d, %Y") if date_from else now.strftime("%b %d, %Y")
+        filename = f"Algospring_CRM_Report_{now.strftime('%Y%m%d')}.xlsx"
         subject = f"CRM Request Status Report - {report_date}"
         body = (
             "Dear Amit,\n\n"
             f"Please find attached the CRM Request Status Report for {report_date}. "
-            "This report includes Success and Failed requests for the specified date.\n\n"
+            "This report includes Success and Failed requests for the specified date. "
+            "Pending requests are included under Failed.\n\n"
             "If you require additional fields or a different date range, please let us know.\n\n"
             "Sincerely,\n"
             "Algospring Automated System"
@@ -207,7 +225,15 @@ def send_email_report(
             filename=filename
         )
         
-        return {"message": f"Email successfully sent to {email}"}
+        return {
+            "message": f"Email successfully sent to {email}",
+            "server_date": date.today().isoformat(),
+            "report_date_from": date_from.isoformat() if date_from else None,
+            "report_date_to": date_to.isoformat() if date_to else None,
+            "date_filter_column": settings.created_at_column,
+            "row_count": len(rows),
+            "pending_as_failed_count": pending_as_failed_count,
+        }
         
     except HTTPException:
         raise
