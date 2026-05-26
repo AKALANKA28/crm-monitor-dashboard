@@ -2,6 +2,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
+import re
 from typing import Any
 
 from openpyxl import Workbook
@@ -17,6 +18,13 @@ try:
 except ImportError:
     ExcelImage = None
 
+try:
+    from openpyxl.cell.rich_text import CellRichText, TextBlock, InlineFont
+except ImportError:
+    CellRichText = None
+    TextBlock = None
+    InlineFont = None
+
 from app.config import Settings
 from app.data_access import RequestFilters, STATUS_ORDER, _normalize_status_counts
 
@@ -27,6 +35,14 @@ ERROR_COMMENT_COLUMN = "Bot Error Comment"
 ERROR_COMMENT_COLUMN_WIDTH = 70
 ERROR_COMMENT_WRAP_CHARS = 70
 ERROR_COMMENT_MAX_ROW_HEIGHT = 150
+ERROR_COMMENT_LABEL_COLOR = "C0504D"
+ERROR_COMMENT_BASE_COLOR = "244062"
+
+LOG_FINAL_STATUS_KEY = "LogFinalAppStatus"
+LOG_MISSING_PROSPECT_FIELDS_KEY = "LogMissingProspectFields"
+LOG_MISSING_PROSPECT_DOCS_KEY = "LogMissingProspectDocs"
+LOG_MISSING_LEAD_FIELDS_KEY = "LogMissingLeadFields"
+LOG_MISSING_LEAD_DOCS_KEY = "LogMissingLeadDocs"
 
 BRAND_COLORS = {
     "brand_blue": "00385F",
@@ -103,7 +119,7 @@ EMAIL_FIELD_ALIASES = {
     "No of Documents": ["NoOfDocuments", "DocumentCount", "DocumentsCount"],
     "Submitted ON": ["SubmittedOn", "SubmittedDate", "CreatedAt", "GenerationDate"],
     "Bot Status(Passed/Error)": ["BotStatus", "CRMStatus", "Status", "AppStatus"],
-    "Bot Error Comment": ["ValidationError", "BotErrorComment", "LastError", "ErrorComment"],
+    "Bot Error Comment": ["ValidationError","LastError"],
     "Pass Status(Lead / Prospect)": ["AppStatus"],
     "Lead_Ref_No": ["LeadRefNo"],
     "Prospect_Ref_No": ["ProspectRefNo"],
@@ -310,7 +326,7 @@ def _apply_requests_table_style(ws, max_row: int, max_col: int, status_col_idx: 
             continue
         max_length = 12
         for cell in ws[letter]:
-            max_length = max(max_length, min(len(str(cell.value or "")), 45))
+            max_length = max(max_length, min(len(_plain_text(cell.value)), 45))
         ws.column_dimensions[letter].width = max_length + 3
 
 def _header_column_index(ws, target: str) -> int | None:
@@ -321,7 +337,7 @@ def _header_column_index(ws, target: str) -> int | None:
     return None
 
 def _wrapped_line_count(value: Any) -> int:
-    text = str(value or "")
+    text = _plain_text(value)
     if not text:
         return 1
     return sum(max(1, (len(part) // ERROR_COMMENT_WRAP_CHARS) + 1) for part in text.splitlines() or [""])
@@ -379,6 +395,8 @@ def _email_template_table(
 def _email_field_value(field: str, row: dict[str, Any], column_map: dict[str, str]) -> Any:
     if field == "Bank Financed Y/N":
         return _bank_financed_value(row)
+    if field == "Bot Error Comment":
+        return _bot_error_comment(row)
 
     value: Any = ""
     if field == "Vehicle CV":
@@ -389,6 +407,10 @@ def _email_field_value(field: str, row: dict[str, Any], column_map: dict[str, st
         value = row.get("Email_CRM") or row.get("EmailCRM") or row.get("Email") or ""
     elif field == "Mobile Number":
         value = row.get("Mobile_CRM") or row.get("InsuredMobileNumber") or row.get("PhoneNumber") or ""
+    elif field == "Bot Status(Passed/Error)":
+        column = column_map.get(field)
+        raw_value = row.get(column, "") if column else ""
+        value = str(raw_value).upper() if raw_value is not None else ""
     else:
         column = column_map.get(field)
         if column:
@@ -398,6 +420,135 @@ def _email_field_value(field: str, row: dict[str, Any], column_map: dict[str, st
         return _format_date_only(value)
 
     return value
+
+
+def _bot_error_comment(row: dict[str, Any]) -> Any:
+    base_error_lines = _base_error_lines(row)
+    missing_lines = _missing_reason_lines(row)
+    if not base_error_lines and not missing_lines:
+        return ""
+    if CellRichText is None or TextBlock is None or InlineFont is None:
+        return _plain_bot_error_comment(base_error_lines, missing_lines)
+    return _rich_bot_error_comment(base_error_lines, missing_lines)
+
+
+def _plain_bot_error_comment(base_error_lines: list[str], missing_lines: list[tuple[str, list[str]]]) -> str:
+    lines: list[str] = []
+    lines.extend(base_error_lines)
+    for label, items in missing_lines:
+        lines.append(f"{label}: {', '.join(items)}")
+    return "\n".join(lines)
+
+
+def _rich_bot_error_comment(base_error_lines: list[str], missing_lines: list[tuple[str, list[str]]]) -> CellRichText:
+    rich_text = CellRichText()
+    is_first = True
+    for line in base_error_lines:
+        prefix = "" if is_first else "\n"
+        rich_text.append(TextBlock(_inline_font(ERROR_COMMENT_BASE_COLOR, bold=True), f"{prefix}{line}"))
+        is_first = False
+    for label, items in missing_lines:
+        prefix = "" if is_first else "\n"
+        rich_text.append(TextBlock(_inline_font(ERROR_COMMENT_LABEL_COLOR, bold=True), f"{prefix}{label}: "))
+        rich_text.append(", ".join(items))
+        is_first = False
+    return rich_text
+
+
+def _first_text(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _base_error_lines(row: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for value in (row.get("ValidationError"), row.get("LastError")):
+        text = str(value or "").strip()
+        if not text:
+            continue
+        parts = [part.strip() for part in text.splitlines() if part.strip()]
+        lines.extend(parts or [text])
+    return lines
+
+
+def _missing_reason_lines(row: dict[str, Any]) -> list[tuple[str, list[str]]]:
+    final_status = str(row.get(LOG_FINAL_STATUS_KEY) or "").strip().casefold()
+    if final_status == "prospect":
+        return []
+    if final_status == "lead":
+        return _prospect_missing_lines(row, docs_label="Missing Documents For a Prospect")
+    if not final_status:
+        lines: list[tuple[str, list[str]]] = []
+        lines.extend(_prospect_missing_lines(row, docs_label="Missing Documents For a Prospect"))
+        lines.extend(_lead_missing_lines(row))
+        return lines
+    return []
+
+
+def _prospect_missing_lines(row: dict[str, Any], docs_label: str) -> list[tuple[str, list[str]]]:
+    lines: list[tuple[str, list[str]]] = []
+    lines.extend(_missing_lines("Missing Fields For a Prospect", row.get(LOG_MISSING_PROSPECT_FIELDS_KEY)))
+    lines.extend(_missing_lines(docs_label, row.get(LOG_MISSING_PROSPECT_DOCS_KEY)))
+    return lines
+
+
+def _lead_missing_lines(row: dict[str, Any]) -> list[tuple[str, list[str]]]:
+    lines: list[tuple[str, list[str]]] = []
+    lines.extend(_missing_lines("Missing Fields For a Lead", row.get(LOG_MISSING_LEAD_FIELDS_KEY)))
+    lines.extend(_missing_lines("Missing Documents For a Lead", row.get(LOG_MISSING_LEAD_DOCS_KEY)))
+    return lines
+
+
+def _missing_lines(label: str, value: Any) -> list[tuple[str, list[str]]]:
+    items = _split_missing_values(value)
+    if not items:
+        return []
+    return [(label, items)]
+
+
+def _split_missing_values(value: Any) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    parts = [part.strip() for part in re.split(r"[,\n;]+", text) if part.strip()]
+    return [_humanize_missing_item(part) for part in parts]
+
+
+def _humanize_missing_item(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return text
+    if text.replace(" ", "").isupper():
+        return text
+    text = text.replace("_", " ")
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text)
+    text = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", text)
+    return " ".join(text.split())
+
+
+def _inline_font(color: str, bold: bool = False) -> InlineFont:
+    if InlineFont is None:
+        raise RuntimeError("InlineFont is not available in this openpyxl version.")
+    return InlineFont(color=_argb_color(color), b=bold)
+
+
+def _argb_color(value: str) -> str:
+    cleaned = value.strip().lstrip("#").upper()
+    if len(cleaned) == 6:
+        return f"FF{cleaned}"
+    return cleaned
+
+
+def _plain_text(value: Any) -> str:
+    if value is None:
+        return ""
+    plain = getattr(value, "plain", None)
+    if isinstance(plain, str):
+        return plain
+    return str(value)
 
 
 def _bank_financed_value(row: dict[str, Any]) -> str:

@@ -108,6 +108,10 @@ class SqlServerRepository:
         parts = "dbo.RequestsValidationFailures".split(".")
         return ".".join(self._quote_identifier(part.strip("[] ")) for part in parts)
 
+    def _app_status_reason_log_table_name(self) -> str:
+        parts = "dbo.AppStatusReasonLog".split(".")
+        return ".".join(self._quote_identifier(part.strip("[] ")) for part in parts)
+
     def _column(self, name: str) -> str:
         return self._quote_identifier(name.strip("[] "))
 
@@ -212,6 +216,7 @@ class SqlServerRepository:
         submissions_table = self._submissions_table_name()
         outlets_table = self._outlets_table_name()
         validation_failures_table = self._validation_failures_table_name()
+        app_status_table = self._app_status_reason_log_table_name()
         created_col = self._column(self.settings.created_at_column)
         request_col = self._column(self.settings.request_id_column)
         sub_request_col = self._column("RequestId")
@@ -227,6 +232,14 @@ class SqlServerRepository:
         validation_request_col = self._column("RequestId")
         validation_error_col = self._column("ValidationError")
         validation_id_col = self._column("Id")
+        log_request_col = self._column("RequestId")
+        log_id_col = self._column("LogId")
+        log_final_status_col = self._column("FinalAppStatus")
+        log_missing_prospect_fields_col = self._column("MissingProspectFields")
+        log_missing_prospect_docs_col = self._column("MissingProspectDocs")
+        log_missing_lead_fields_col = self._column("MissingLeadFields")
+        log_missing_lead_docs_col = self._column("MissingLeadDocs")
+        log_created_col = self._column("CreatedAt")
 
         submissions_subquery = (
             "SELECT SubRequestId, OutletId, Mode, DocumentCount FROM ("
@@ -238,12 +251,29 @@ class SqlServerRepository:
             ") AS ranked WHERE RowNum = 1"
         )
 
+        app_status_subquery = (
+            "SELECT LogRequestId, LogFinalAppStatus, LogMissingProspectFields, LogMissingProspectDocs, "
+            "LogMissingLeadFields, LogMissingLeadDocs FROM ("
+            f"SELECT {log_request_col} AS LogRequestId, {log_final_status_col} AS LogFinalAppStatus, "
+            f"{log_missing_prospect_fields_col} AS LogMissingProspectFields, "
+            f"{log_missing_prospect_docs_col} AS LogMissingProspectDocs, "
+            f"{log_missing_lead_fields_col} AS LogMissingLeadFields, "
+            f"{log_missing_lead_docs_col} AS LogMissingLeadDocs, "
+            f"{log_created_col} AS LogCreatedAt, {log_id_col} AS LogId, "
+            f"ROW_NUMBER() OVER (PARTITION BY {log_request_col} ORDER BY {log_created_col} DESC, {log_id_col} DESC) AS RowNum "
+            f"FROM {app_status_table}"
+            ") AS ranked WHERE RowNum = 1"
+        )
+
         query = (
             "SELECT c.*, s.DocumentCount, vf.ValidationError, "
+            "asr.LogFinalAppStatus, asr.LogMissingProspectFields, asr.LogMissingProspectDocs, "
+            "asr.LogMissingLeadFields, asr.LogMissingLeadDocs, "
             f"CASE WHEN UPPER(s.Mode) = 'EMAIL' THEN 'ATT' ELSE o.{outlet_name_col} END AS OutletName "
             f"FROM {table} AS c "
             f"LEFT JOIN ({submissions_subquery}) AS s ON s.SubRequestId = c.{request_col} "
             f"LEFT JOIN {outlets_table} AS o ON o.{outlet_id_col} = s.OutletId "
+            f"LEFT JOIN ({app_status_subquery}) AS asr ON asr.LogRequestId = c.{request_col} "
             "OUTER APPLY ("
             "SELECT STUFF(("
             f"SELECT NCHAR(10) + CAST(vf_inner.{validation_error_col} AS NVARCHAR(MAX)) "
