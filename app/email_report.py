@@ -22,7 +22,11 @@ def pending_as_failed_rows(rows: list[dict[str, Any]], status_column: str) -> tu
 
 
 def _status_column(row: dict[str, Any], configured_column: str) -> str | None:
-    candidates = [configured_column, "CRMStatus", "crmStatus", "crm_status", "Status", "status"]
+    candidates = [
+        configured_column,
+        "ValidationStatus",
+        "CRMStatus",
+    ]
     for candidate in candidates:
         if candidate in row:
             return candidate

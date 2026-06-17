@@ -46,7 +46,9 @@ class MicrosoftGraphEmailService:
         result = None
 
         if self.settings.graph_refresh_token:
-            result = self._acquire_token_by_refresh_token()
+            refresh_result = self._acquire_token_by_refresh_token()
+            if refresh_result and "access_token" in refresh_result:
+                result = refresh_result
 
         app = None
         if not result:

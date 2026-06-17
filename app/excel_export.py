@@ -118,7 +118,7 @@ EMAIL_FIELD_ALIASES = {
     "Bank Name": ["BankName"],
     "No of Documents": ["NoOfDocuments", "DocumentCount", "DocumentsCount"],
     "Submitted ON": ["SubmittedOn", "SubmittedDate", "CreatedAt", "GenerationDate"],
-    "Bot Status(Passed/Error)": ["BotStatus", "CRMStatus", "Status", "AppStatus"],
+    "Bot Status(Passed/Error)": ["BotStatus", "ValidationStatus", "CRMStatus", "AppStatus"],
     "Bot Error Comment": ["ValidationError","LastError"],
     "Pass Status(Lead / Prospect)": ["AppStatus"],
     "Lead_Ref_No": ["LeadRefNo"],
@@ -350,7 +350,17 @@ def _status_counts(rows: list[dict[str, Any]], settings: Settings) -> dict[str, 
     return _normalize_status_counts(counts)
 
 def _status_value(row: dict[str, Any], settings: Settings) -> str:
-    for key in [settings.status_column, "CRMStatus", "crmStatus", "crm_status", "Status", "status"]:
+    for key in [
+        settings.status_column,
+        "ValidationStatus",
+        "validationStatus",
+        "validation_status",
+        "CRMStatus",
+        "crmStatus",
+        "crm_status",
+        "Status",
+        "status",
+    ]:
         if key in row:
             return _canonical_status(row.get(key))
     return "Unknown"
@@ -364,7 +374,17 @@ def _canonical_status(value: Any) -> str:
     return mapping.get(normalized, text)
 
 def _status_column_index(columns: list[str], settings: Settings) -> int | None:
-    candidates = {settings.status_column, "CRMStatus", "crmStatus", "crm_status", "Status", "status"}
+    candidates = {
+        settings.status_column,
+        "ValidationStatus",
+        "validationStatus",
+        "validation_status",
+        "CRMStatus",
+        "crmStatus",
+        "crm_status",
+        "Status",
+        "status",
+    }
     for index, column in enumerate(columns, start=1):
         if column in candidates:
             return index
